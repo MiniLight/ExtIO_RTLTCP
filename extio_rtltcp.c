@@ -4,6 +4,7 @@
 
 #include <winsock2.h>
 #include <windows.h>
+#include <process.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -21,6 +22,8 @@
 #define SET_FREQ_CORRECTION  5  // khz
 #define SET_DIRECT_SAMPLING  9  // 0, 1(I), 2(Q)
 #define SET_GAIN_INDEX       13 // 0 ...
+#define UDP_ESTABLISH        0x10
+#define UDP_TERMINATE        0x11
 
 // ExtIO constants
 
@@ -29,13 +32,13 @@
 
 // constants
 
-#define SAMPLE_PAIRS (4 * 1024)
+#define SAMPLE_PAIRS (4 * 16384)
 #define BUF_SIZE 1024
-#define TITLE "ExtIO_RTLTCP"
+#define TITLE "ExtIO_RTLUDP"
 
 #define HOSTNAME   "localhost"
 #define PORT       "1234"
-#define SAMPLERATE "2400000"
+#define SAMPLERATE "1048576"
 
 // types
 
@@ -206,10 +209,11 @@ int LIBAPI StartHW(long freq)
     HOSTENT *host;
 
     // open socket
-    sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock == INVALID_SOCKET) return 0;
 
     // set hostname
+    memset(&server, 0, sizeof(server));
     server.sin_family = AF_INET;
     server.sin_port = htons(atoi(port));
     server.sin_addr.s_addr = inet_addr(hostname);
@@ -232,10 +236,20 @@ int LIBAPI StartHW(long freq)
                  hostname, port, WSAGetLastError());
         MessageBox(NULL, buf, TITLE, 0);
         return 0;
-    }    
+    }
 
     // have an active connection now
     active = true;
+
+    // establish udp connection
+    issue_command(UDP_ESTABLISH, 0);
+
+    struct { /* structure size must be multiple of 2 bytes */
+        char magic[4];
+        uint32_t tuner_type;
+        uint32_t tuner_gain_count;
+    } dongle_info;
+    recv(sock, (char*)&dongle_info, sizeof(dongle_info), 0);
 
     // create consumer thread
     // thread = CreateThread(NULL, 0, consumer, 0, 0, 0);
@@ -262,6 +276,7 @@ int LIBAPI StartHW(long freq)
 
 void LIBAPI StopHW(void)
 {
+    issue_command(UDP_TERMINATE, 0);
     active = false;
     closesocket(sock);
     if (thread != NULL) {
